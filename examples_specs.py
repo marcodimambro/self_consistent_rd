@@ -29,6 +29,8 @@ def spec_test(params: dict) -> ModelSpec:
         #('p', 'y'): params['eps_py'],
         #('k', 'y'): params['eps_ky'],
     }
+    
+    # here define functional shape of barriers
     ab = BarrierFn(expr="alpha * V['x'] + gamma* np.array([V['a'].max(), V['b'].max()]).max()", params={'alpha': params.get('alpha_ab',1.0), 'gamma': params.get('gamma_ab',1.0)})
     ac = BarrierFn(expr="alpha * V['x'] + gamma* np.array([V['a'].max(), V['c'].max()]).max()", params={'alpha': params.get('alpha_ac',1.0), 'gamma': params.get('gamma_ac',1.0)})
     bc = BarrierFn(expr="alpha * V['x'] + gamma* np.array([V['b'].max(), V['c'].max()]).max()", params={'alpha': params.get('alpha_bc',1.0), 'gamma': params.get('gamma_bc',1.0)})
