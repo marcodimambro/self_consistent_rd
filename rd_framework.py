@@ -4,7 +4,6 @@ from typing import Dict, List, Optional, Callable, Tuple, Any
 from scipy import sparse as sp
 import scipy.sparse.linalg as spla
 from diffusion_drift_operators import build_scharfetter_gummel_operator, laplacian_1d_nonuniform
-import rates
 from collections import defaultdict, deque
 
 @dataclass
@@ -104,6 +103,21 @@ def compute_potentials(x: np.ndarray, rho: np.ndarray, spec: 'ModelSpec') -> Dic
             V[sname] = V[sname] + 1.5 * np.max([np.max(V[sn]) for sn in V])
     return V
 
+
+def compute_rate_2_pathways(k0, V_from, V_barrier_I, V_barrier_II = None, mu_I= None, mu_II=None, beta = 1):
+    """Computes the rate considering two reaction pathways."""
+    if k0 == 0:
+        return np.zeros_like(V_from)
+    if V_barrier_II is None:
+        # only one pathway provided
+        rate = k0 * np.exp(-beta * (V_barrier_I - V_from)) * np.exp(beta * mu_I)
+    else:
+        # two pathways
+        rate = k0 * np.exp(-beta * (V_barrier_I - V_from)) * np.exp(beta * mu_I) +  k0 * np.exp(-beta * (V_barrier_II - V_from)) * np.exp(beta * mu_II)
+
+    return rate
+
+
 def compute_reaction_rates(x: np.ndarray, V: Dict[str, np.ndarray], rho: np.ndarray, spec: 'ModelSpec', beta: float) -> Dict[Tuple[str,str], np.ndarray]:
     idx = _species_index(spec)
     k: Dict[Tuple[str,str], np.ndarray] = {}
@@ -121,7 +135,7 @@ def compute_reaction_rates(x: np.ndarray, V: Dict[str, np.ndarray], rho: np.ndar
             barrier_II = None
             mu_II = None
         
-        kval = rates.compute_rate_2_pathways(k0=r.k0, V_from=V[r.source], V_barrier_I=barrier_I, V_barrier_II=barrier_II, mu_I=mu_I, mu_II=mu_II, beta=beta)
+        kval = compute_rate_2_pathways(k0=r.k0, V_from=V[r.source], V_barrier_I=barrier_I, V_barrier_II=barrier_II, mu_I=mu_I, mu_II=mu_II, beta=beta)
         kval[0] = 0.0; kval[-1] = 0.0  # boundary
         k[(r.source, r.target)] = kval
     return k

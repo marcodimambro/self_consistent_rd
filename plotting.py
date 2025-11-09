@@ -12,27 +12,26 @@ from rd_framework import (
 
 Array = np.ndarray
 
-def compute_fluxes(x: Array, rho_by_species: Dict[str, Array], V_by_species: Dict[str, Array], D_by_species: Dict[str, float], beta: float) -> Dict[str, Tuple[Array, Array]]:
-    """
-    Compute interface fluxes J for each species using midpoint discretization of
-    J = -D ( d rho / dx + beta * rho_bar * dV/dx ).
-    Returns dict: species -> (x_edge, J_edge) where x_edge has length nx-1.
-    """
-    nx = len(x)
-    x_edge = 0.5 * (x[:-1] + x[1:])
-    fluxes = {}
-    for name, rho in rho_by_species.items():
-        V = V_by_species[name]
-        D = D_by_species[name]
-        dx = np.diff(x)
-        drho = np.diff(rho)
-        dV = np.diff(V)
-        rho_bar = 0.5 * (rho[:-1] + rho[1:])
-        J = -D * (drho / dx + beta * rho_bar * (dV / dx))
-        fluxes[name] = (x_edge, J)
-    return fluxes
-
-
+# def compute_fluxes(x: Array, rho_by_species: Dict[str, Array], V_by_species: Dict[str, Array], D_by_species: Dict[str, float], beta: float) -> Dict[str, Tuple[Array, Array]]:
+#     """
+#     NOT USED, NOT COMPATIBLE WITH THE DIFFUSION DRIFT OPERATOR USED IN SOLVER.
+#     Compute interface fluxes J for each species using midpoint discretization of
+#     J = -D ( d rho / dx + beta * rho_bar * dV/dx ).
+#     Returns dict: species -> (x_edge, J_edge) where x_edge has length nx-1.
+#     """
+#     nx = len(x)
+#     x_edge = 0.5 * (x[:-1] + x[1:])
+#     fluxes = {}
+#     for name, rho in rho_by_species.items():
+#         V = V_by_species[name]
+#         D = D_by_species[name]
+#         dx = np.diff(x)
+#         drho = np.diff(rho)
+#         dV = np.diff(V)
+#         rho_bar = 0.5 * (rho[:-1] + rho[1:])
+#         J = -D * (drho / dx + beta * rho_bar * (dV / dx))
+#         fluxes[name] = (x_edge, J)
+#     return fluxes
 
 def compute_fluxes_gummel_method(x: Array, rho_by_species: Dict[str, Array], V_by_species: Dict[str, Array], D_by_species: Dict[str, float], beta: float) -> Dict[str, Tuple[Array, Array]]:
     """
@@ -47,8 +46,6 @@ def compute_fluxes_gummel_method(x: Array, rho_by_species: Dict[str, Array], V_b
         fluxes[name] = (x_edge, J)
     return fluxes
 
-
-
 def compute_barriers(x: Array, V_by_species: Dict[str, Array], spec: ModelSpec) -> Dict[Tuple[str, int], Array]:
     """
     Compute barrier profiles for each reaction pathway using the same expressions
@@ -61,14 +58,12 @@ def compute_barriers(x: Array, V_by_species: Dict[str, Array], spec: ModelSpec) 
             barriers[(r.name, pi)] = b
     return barriers
 
-
 def _species_by_role(spec: ModelSpec) -> Dict[str, List[str]]:
     by_role: Dict[str, List[str]] = {}
     for s in spec.species:
         role = s.role or "unlabeled"
         by_role.setdefault(role, []).append(s.name)
     return by_role
-
 
 def _collect_species_data(rho: Array, spec: ModelSpec) -> Dict[str, Array]:
     names = [s.name for s in spec.species]
@@ -224,6 +219,37 @@ def plot_results(
 
     return out
 
+def create_color_map(spec: ModelSpec, roles: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, Tuple[float,float,float]]]:
+    """
+    Create a color map for species per role using tab10 colors.
+    Ensures unique colors across all roles.
+    """
+    by_role = _species_by_role(spec)
+    selected_roles = list(roles) if roles is not None else list(by_role.keys())
+
+    # tab10 colors
+    colors = plt.get_cmap('tab10').colors
+    # sort the colors in a dict for each role
+    color_map: Dict[str, Dict[str, Tuple[float,float,float]]] = {}
+    # assign unique colors to species across all roles (never reuse a color)
+    available = list(colors)[:]  # copy of tab10 colors
+    assigned: Dict[str, Tuple[float, float, float]] = {}
+    for role in selected_roles:
+        color_map[role] = {}
+        for n in by_role.get(role, []):
+            if n in assigned:
+                color_map[role][n] = assigned[n]
+                continue
+            if available:
+                c = available.pop(0)
+            else:
+                # palette exhausted: generate a new distinct color deterministically
+                idx = len(assigned)
+                c = plt.get_cmap('hsv')((idx % 360) / 360.0)[:3]
+            assigned[n] = c
+            color_map[role][n] = c
+    return color_map
+
 def plot_eq_neq(x: Array, rho_eq: Array, rho_neq: Array, spec: ModelSpec, roles: Optional[Iterable[str]] = None, show: bool = True):
     """
     Plot comparison of equilibrium vs non-equilibrium densities per species and fluxes
@@ -234,6 +260,8 @@ def plot_eq_neq(x: Array, rho_eq: Array, rho_neq: Array, spec: ModelSpec, roles:
     by_role = _species_by_role(spec)
     selected_roles = list(roles) if roles is not None else list(by_role.keys())
 
+    color_map = create_color_map(spec, roles=selected_roles)
+
     fig, axs = plt.subplots(len(selected_roles), 2, figsize=(8, 3 * len(selected_roles)))
     if len(selected_roles) == 1:
         axs = axs.reshape(1,2)
@@ -242,8 +270,8 @@ def plot_eq_neq(x: Array, rho_eq: Array, rho_neq: Array, spec: ModelSpec, roles:
         plt.sca(axs[j,0])
         plt.title(f"Densities | role={role}")
         for n in by_role.get(role, []):
-            plt.plot(x, rho_eq_map[n], label=f"{n} (eq)", linestyle='--')
-            plt.plot(x, rho_neq_map[n], label=f"{n} (neq)", linestyle='-')
+            plt.plot(x, rho_eq_map[n], label=f"{n} (eq)", linestyle='--', color= color_map[role][n])
+            plt.plot(x, rho_neq_map[n], label=f"{n} (neq)", linestyle='-', color= color_map[role][n])
         plt.xlabel( "x ")
         plt.ylabel( "rho ")
         plt.legend()
@@ -257,8 +285,9 @@ def plot_eq_neq(x: Array, rho_eq: Array, rho_neq: Array, spec: ModelSpec, roles:
         for n in by_role.get(role, []):
             x_edge_eq, J_eq = flux_eq[n]
             x_edge_neq, J_neq = flux_neq[n]
-            plt.plot(x_edge_eq, J_eq, label=f"{n} (eq)", linestyle='--')
-            plt.plot(x_edge_neq, J_neq, label=f"{n} (neq)", linestyle='-')
+            plt.plot(x_edge_eq, J_eq, label=f"{n} (eq)", linestyle='--', color= color_map[role][n])
+            plt.plot(x_edge_neq, J_neq, label=f"{n} (neq)", linestyle='-', color= color_map[role][n])
+
         plt.xlabel( "x (edge) ")
         plt.ylabel( "J ")
         plt.legend()
