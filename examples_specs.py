@@ -11,8 +11,8 @@ def spec_test(params: dict) -> ModelSpec:
         Species('c', D=params.get('D',1.0), kappa=0.0, role='client', total =params.get('N_c',1.0)),
         Species('x', D=params.get('D',1.0), kappa=params.get('kappa_x',0.0), role='scaffold', total =params.get('N_x',1500.0)),
         Species('y', D=params.get('D',1.0), kappa=params.get('kappa_y',0.0), role='scaffold', total =params.get('N_y',1500.0)),
-        #Species('p', D=params.get('D',1.0), kappa=0.0, role='scaffold', conserve_mass= True),
-        #Species('k', D=params.get('D',1.0), kappa=0.0, role='scaffold', conserve_mass= True),
+        #Species('p', D=params.get('D',1.0), kappa=0.0, role='scaffold', total = params.get('N_p',1.0)),
+        #Species('k', D=params.get('D',1.0), kappa=0.0, role='scaffold', total = params.get('N_k',1.0))
     ]
     eps = {
         ('x','x'): params['eps_x'], 
@@ -34,10 +34,10 @@ def spec_test(params: dict) -> ModelSpec:
     ab = BarrierFn(expr="alpha * V['x'] + gamma* np.array([V['a'].max(), V['b'].max()]).max()", params={'alpha': params.get('alpha_ab',1.0), 'gamma': params.get('gamma_ab',1.0)})
     ac = BarrierFn(expr="alpha * V['x'] + gamma* np.array([V['a'].max(), V['c'].max()]).max()", params={'alpha': params.get('alpha_ac',1.0), 'gamma': params.get('gamma_ac',1.0)})
     bc = BarrierFn(expr="alpha * V['x'] + gamma* np.array([V['b'].max(), V['c'].max()]).max()", params={'alpha': params.get('alpha_bc',1.0), 'gamma': params.get('gamma_bc',1.0)})
-    xyI = BarrierFn(expr="alpha * V['x'] + gamma* np.array([V['x'].max(), V['y'].max()]).max()", params={'alpha': params.get('alpha_xy_I',1.2), 'gamma': params.get('gamma_xy_I',1.0)})
-    xyII = BarrierFn(expr="alpha * V['y'] + gamma* np.array([V['x'].max(), V['y'].max()]).max()", params={'alpha': params.get('alpha_xy_II',1.5), 'gamma': params.get('gamma_xy_II',1.0)})
-    
-    
+    xyI = BarrierFn(expr="alpha * ((beta)*V['x']+(1 - beta) * V['y']) + gamma* np.array([V['x'].max(), V['y'].max()]).max()", params={'alpha': params.get('alpha_xy_I',1.2), 'beta': params.get('beta_xy_I',0.5), 'gamma': params.get('gamma_xy_I',1.0)})
+    xyII = BarrierFn(expr="alpha *((beta)*V['x']+(1 - beta) * V['y']) + gamma* np.array([V['x'].max(), V['y'].max()]).max()", params={'alpha': params.get('alpha_xy_II',1.5), 'beta': params.get('beta_xy_II',0.5), 'gamma': params.get('gamma_xy_II',1.0)})
+
+
     rxns = [Reaction(name='a_to_b', source='a', target='b', k0=params.get('k0_client',1.0), pathways=[ReactionPathway(barrier=ab, mu =params.get('mu_ab',0.0))]),
             Reaction(name='b_to_a', source='b', target='a', k0=params.get('k0_client',1.0), pathways=[ReactionPathway(barrier=ab, mu =params.get('mu_ba',0.0))]),
             Reaction(name='a_to_c', source='a', target='c', k0=params.get('k0_client',1.0), pathways=[ReactionPathway(barrier=ac, mu =params.get('mu_ac',0.0))]),
