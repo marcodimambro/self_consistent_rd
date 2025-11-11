@@ -145,7 +145,7 @@ def infer_groups_from_reactions(spec: 'ModelSpec') -> List[List[str]]:
     idx = _species_index(spec)
 
     # mark species that participate in at least one ACTIVE reaction (k0 != 0)
-    print('Inferring groups from reactions...')
+    #print('Inferring groups from reactions...')
     involved = {s.name: False for s in spec.species}
     for r in spec.reactions:
         if r.k0 != 0:
@@ -169,9 +169,9 @@ def infer_groups_from_reactions(spec: 'ModelSpec') -> List[List[str]]:
             adj[r.source].add(r.target)
             adj[r.target].add(r.source)
             
-    #print adjacency for debugging
-    for k in adj:
-        print(f'Adjacency for {k}: {adj[k]}')
+    # #print adjacency for debugging
+    # for k in adj:
+    #     print(f'Adjacency for {k}: {adj[k]}')
 
     # connected components → groups (size > 1)
     seen = set()
@@ -291,7 +291,7 @@ def solve_steady_state(x: np.ndarray, rho_init: np.ndarray, spec: 'ModelSpec',
     # auto-groups if needed (so assemble_operator sees the same groups)
     finalize_groups(spec)
     # print all initial species info
-    print_species(spec)
+    print_species(spec) if verbose else None
 
 
     # auto-totals if not provided
@@ -336,9 +336,10 @@ def solve_steady_state(x: np.ndarray, rho_init: np.ndarray, spec: 'ModelSpec',
         rho_new = sol.reshape((nsp, nx))
         diff = np.linalg.norm(rho_new - rho_old) / max(1e-12, np.linalg.norm(rho_old))
         diffs.append(diff)
+        w = _weights_trapz(x)
+        masses = [(s.name, float(np.dot(w, rho_new[i]))) for i,s in enumerate(spec.species)]
+
         if verbose and it % interval == 0:
-            w = _weights_trapz(x)
-            masses = [(s.name, float(np.dot(w, rho_new[i]))) for i,s in enumerate(spec.species)]
             print('Iter {:5d}: diff={:.3e}; '.format(it, diff) + ', '.join([f'N_{n}={m:.3f}' for n,m in masses]))
         if len(diffs) > 50 and np.mean(diffs[-10:]) < tol:
             final_info.update({'converged': True, 'message': 'Converged by rolling mean of last 10 diffs.', 'final_diff': float(np.mean(diffs[-10:])), 'iter': it, 'final_masses': masses})
@@ -355,59 +356,27 @@ def solve_steady_state(x: np.ndarray, rho_init: np.ndarray, spec: 'ModelSpec',
                        })
     return rho_old, final_info
 
-
-# def solve_steady_state(x: np.ndarray, rho_init: np.ndarray, spec: 'ModelSpec', totals: Dict[str, float], beta: float = 1.0, max_iter:int = 5000, tol: float = 1e-6, verbose: bool = True, interval: int = 100):
-    nx = len(x)
+def initial_guess(params, spec: 'ModelSpec') -> np.ndarray:
+    L = params["L"]
+    dx = params.get('dx_coeff', 6) * np.sqrt(params['kappa_x']) if params['kappa_x'] > 0 else 1
+    nx = int(2 * params['L'] / dx + 1)
+    x = np.linspace(-L, L, nx)
     nsp = len(spec.species)
-    assert rho_init.shape == (nsp, nx)
-    RHS = np.zeros(nsp * nx)
-    for i in range(nsp):
-        RHS[i*nx] = 0.0
-        RHS[(i+1)*nx - 1] = 0.0
-    rho_old = rho_init.copy().astype(float)
-    M_prev, _, norm_rows = assemble_operator(x, rho_old, spec, beta=beta)
-    def fill_RHS(RHS_vec, norm_rows, totals):
-        for s in spec.species:
-            if s.name in norm_rows and s.conserve_mass:
-                RHS_vec[norm_rows[s.name]] = totals.get(s.name, 0.0)
-        for gk, row in norm_rows.items():
-            if gk.startswith('group:'):
-                RHS_vec[row] = totals.get(gk, 0.0)
-        return RHS_vec
-    RHS = fill_RHS(RHS, norm_rows, totals)
-    epsilon = np.random.rand(max_iter)
-    final_info = {'converged': False, 'message': '', 'final_diff': None, 'iter': max_iter, 'final_masses': []}
-    diffs = []
-    for it in range(max_iter):
-        M_cur, _, norm_rows = assemble_operator(x, rho_old, spec, beta=beta)
-        RHS = fill_RHS(RHS, norm_rows, totals)
-        mix = np.exp(-epsilon[it])
-        M_mix = (M_cur + mix * M_prev) / (1.0 + mix)
-        try:
-            sol = spla.spsolve(M_mix, RHS)
-        except Exception as e:
-            final_info.update({'converged': False, 'message': f'Linear solve failed at iter {it}: {e}', 'final_diff': np.inf, 'iter': it,
-                               'final_masses': [(s.name, float(np.dot(_weights_trapz(x), rho_old[i]))) for i,s in enumerate(spec.species)]
-                               })
-            return rho_old, final_info
-        rho_new = sol.reshape((nsp, nx))
-        diff = np.linalg.norm(rho_new - rho_old) / max(1e-12, np.linalg.norm(rho_old))
-        diffs.append(diff)
-        if verbose and it % interval == 0:
-            w = _weights_trapz(x)
-            masses = [(s.name, float(np.dot(w, rho_new[i]))) for i,s in enumerate(spec.species)]
-            print('Iter {:5d}: diff={:.3e}; '.format(it, diff) + ', '.join([f'N_{n}={m:.3f}' for n,m in masses]))
-        if len(diffs) > 50 and np.mean(diffs[-10:]) < tol:
-            final_info.update({'converged': True, 'message': 'Converged by rolling mean of last 10 diffs.', 'final_diff': float(np.mean(diffs[-10:])), 'iter': it, 'final_masses': masses})
-            return rho_new, final_info
-        if np.any(np.isnan(rho_new)) or np.any(rho_new < -1e-8):
-            final_info.update({'converged': False, 'message': 'NaN or negative density encountered.', 'final_diff': float(diff), 'iter': it, 'final_masses': masses})
-            return rho_old, final_info
-        rho_old = rho_new
-        M_prev = M_mix
-    final_info.update({'converged': False, 'message': 'Max iterations reached.', 
-                       'final_diff': float(diffs[-1] if diffs else np.inf), 'iter': max_iter,
-                       'final_masses': [(s.name, float(np.dot(_weights_trapz(x), rho_old[i]))) for i,s in enumerate(spec.species)]
-                       })
+    rho0 = np.ones((nsp, nx)) * (1.0 / (2*L))  # simple flat start 
+    # add noise to avoid symmetry issues
+    rho0 += 0.01 * np.random.rand(nsp, nx)
 
-    return rho_old, final_info
+    
+    if params.get('bias_interface', True):
+        for i, s in enumerate(spec.species):
+            #if s.role == 'scaffold':
+            rho0[i,:] = 1 * (1 - 2 * (-1)*(i) * np.tanh(x)) # biasing towards a single interface. Not necessary if we want to study random initial conditions
+    
+    if params.get('nucleation_seed', False):
+        for i, s in enumerate(spec.species):
+            rho0[i,:] += 0.1 * np.exp(-0.5 * (x / 1) ** 2) 
+    return rho0, x
+
+def compute_mass(rho: np.ndarray, x: np.ndarray) -> float:
+    w = _weights_trapz(x)
+    return float(np.dot(w, rho))

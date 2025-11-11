@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Iterable, Optional, Union
 from diffusion_drift_operators import compute_fluxes_gummel
+import pickle
 
 from rd_framework import (
     ModelSpec,
@@ -12,26 +13,6 @@ from rd_framework import (
 
 Array = np.ndarray
 
-# def compute_fluxes(x: Array, rho_by_species: Dict[str, Array], V_by_species: Dict[str, Array], D_by_species: Dict[str, float], beta: float) -> Dict[str, Tuple[Array, Array]]:
-#     """
-#     NOT USED, NOT COMPATIBLE WITH THE DIFFUSION DRIFT OPERATOR USED IN SOLVER.
-#     Compute interface fluxes J for each species using midpoint discretization of
-#     J = -D ( d rho / dx + beta * rho_bar * dV/dx ).
-#     Returns dict: species -> (x_edge, J_edge) where x_edge has length nx-1.
-#     """
-#     nx = len(x)
-#     x_edge = 0.5 * (x[:-1] + x[1:])
-#     fluxes = {}
-#     for name, rho in rho_by_species.items():
-#         V = V_by_species[name]
-#         D = D_by_species[name]
-#         dx = np.diff(x)
-#         drho = np.diff(rho)
-#         dV = np.diff(V)
-#         rho_bar = 0.5 * (rho[:-1] + rho[1:])
-#         J = -D * (drho / dx + beta * rho_bar * (dV / dx))
-#         fluxes[name] = (x_edge, J)
-#     return fluxes
 
 def compute_fluxes_gummel_method(x: Array, rho_by_species: Dict[str, Array], V_by_species: Dict[str, Array], D_by_species: Dict[str, float], beta: float) -> Dict[str, Tuple[Array, Array]]:
     """
@@ -69,6 +50,55 @@ def _collect_species_data(rho: Array, spec: ModelSpec) -> Dict[str, Array]:
     names = [s.name for s in spec.species]
     return {n: rho[i] for i, n in enumerate(names)}
 
+# create a function to extract fluxes, barriers, potentials and densities 
+def extract_results( x: Array, rho: Array, spec: ModelSpec, beta: float, V: Optional[Dict[str, Array]] = None) -> Dict[str, Dict]:
+    """
+    Extract densities, fluxes, potentials, and barriers into a dictionary.
+
+    Parameters
+    ----------
+    x : grid (nx,)
+    rho : densities with shape (n_species, nx)
+    spec : ModelSpec
+    beta : inverse temperature (drift strength factor in J)
+    V : optional potentials dict per species; computed if None
+
+    Returns
+    -------
+    A dictionary of computed data:
+    {
+      'densities': {species: (x, rho)} ,
+      'fluxes':    {species: (x_edge, J_edge)} ,
+      'potentials':{species: (x, V)} ,
+      'barriers':  {(rxn, pi): barrier_array}
+    }
+    """
+    out: Dict[str, Dict] = {}
+
+    rho_by_species = _collect_species_data(rho, spec)
+    names = [s.name for s in spec.species]
+    D_map = {s.name: s.D for s in spec.species}
+
+    out['densities'] = {}
+    for n in names:
+        out['densities'][n] = (x, rho_by_species[n])
+
+    if V is None:
+        V = compute_potentials(x, rho, spec)
+
+    out['potentials'] = {}
+    for n in names:
+        out['potentials'][n] = (x, V[n])
+
+    fluxes = compute_fluxes_gummel_method(x, rho_by_species, V, D_map, beta)
+    out['fluxes'] = {}
+    for n in names:
+        out['fluxes'][n] = fluxes[n]
+
+    B = compute_barriers(x, V, spec)
+    out['barriers'] = B
+
+    return out
 
 def plot_results(
     x: Array,
@@ -229,6 +259,7 @@ def create_color_map(spec: ModelSpec, roles: Optional[Iterable[str]] = None) -> 
 
     # tab10 colors
     colors = plt.get_cmap('tab10').colors
+    colors = ['tab:red', 'tab:blue', 'tab:green', 'tab:orange', 'tab:cyan', 'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:purple']
     # sort the colors in a dict for each role
     color_map: Dict[str, Dict[str, Tuple[float,float,float]]] = {}
     # assign unique colors to species across all roles (never reuse a color)
@@ -297,3 +328,65 @@ def plot_eq_neq(x: Array, rho_eq: Array, rho_neq: Array, spec: ModelSpec, roles:
         plt.show()
 
     return
+
+# kappa_x_values = [0.5, 1.0]
+# results = {}
+# for kappa_x in kappa_x_values:
+#     print(f"[ kappa_x = {kappa_x} ]")
+#     params['kappa_x'] = kappa_x
+#     params['kappa_y'] = kappa_x  # keep them equal for simplicity
+#     spec = spec_test(params)
+#     rho_0, x = rd.initial_guess(params, spec)
+    
+#     rho_ss, info = rd.solve_steady_state(x, rho_0, spec, beta=params["beta"], max_iter=10000, tol=1e-6, verbose=False)
+#     res = plotting.extract_results(x, rho_ss, spec, params['beta'])
+#     results[kappa_x] = res
+
+# filename = "kappa_x_experiment_results.pkl"
+# with open(filename, 'wb') as f:
+#     pickle.dump(results, f)
+# {
+#       'densities': {species: (x, rho)} ,
+#       'fluxes':    {species: (x_edge, J_edge)} ,
+#       'potentials':{species: (x, V)} ,
+#       'barriers':  {(rxn, pi): barrier_array}
+#     }
+
+def plot_kappa_experiment(filename: str, show: bool = True):
+    """
+    Load data from a kappa experiment pickle file and plot the results.
+    """
+    with open(filename, 'rb') as f:
+        data = pickle.load(f)
+        
+    kappa_x_values = sorted(data.keys())
+    # separate clients and scaffolds and plot densities and fluxes
+    fig, axs = plt.subplots(2, 2, figsize=(10, 8))
+    for role in ('client', 'scaffold'):
+        for quantity in ('densities', 'fluxes'):
+            plt.sca(axs[0 if role=='client' else 1, 0 if quantity=='densities' else 1])
+            for kappa_x in kappa_x_values:
+                res = data[kappa_x]
+                items = res[quantity]
+                for species, (x, arr) in items.items():
+                    # check species role
+                    spec_role = None
+                    for s in res['densities'].keys():
+                        if s == species:
+                            spec_role = 'client' if 'a' in s or 'b' in s or 'c' in s else 'scaffold'
+                            break
+                    if spec_role != role:
+                        continue
+                    label = f"{species} (kappa_x={kappa_x})"
+                    if quantity == 'densities':
+                        plt.plot(x, arr, label=label)
+                    elif quantity == 'fluxes':
+                        x_edge, J_edge = arr
+                        plt.plot(x_edge, J_edge, label=label)
+            plt.title(f"{quantity.capitalize()} | role={role}")
+            plt.xlabel("x" if quantity=='densities' else "x (edge)")
+            plt.ylabel("rho" if quantity=='densities' else "J")
+            plt.legend()
+    
+    if show:
+        plt.show()    
